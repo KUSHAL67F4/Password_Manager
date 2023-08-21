@@ -1,11 +1,11 @@
-from flask import Flask, render_template, request, redirect
+from flask import Flask, render_template, request, redirect, jsonify
 import sqlite3
 from cryptography.fernet import Fernet
 import random
 import string
+import re
 
 ENCRYPTION_KEY = Fernet.generate_key()
-
 
 app = Flask(__name__, template_folder='templates')
 DATABASE = "passwords.db"
@@ -61,6 +61,20 @@ def get_rand_passwords():
 
     return randomized_rows
 
+def is_account_or_username_repeated(account, username):
+    if not is_username_valid(username):
+        return True
+
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute("SELECT account, username FROM passwords WHERE account = ? OR username = ?", (account, username))
+    existing_rows = c.fetchall()
+    conn.close()
+    return len(existing_rows) > 0
+    
+def is_username_valid(username):
+    return re.match(r"^[a-zA-Z0-9_]+$", username) is not None
+
 
 @app.route('/')
 def index():
@@ -68,13 +82,20 @@ def index():
 
 @app.route('/add', methods=['GET', 'POST'])
 def add():
+    
     if request.method == 'POST':
         account = request.form['account']
         username = request.form['username']
         password = request.form['password']
-        add_password(account, username, password)
-        return redirect('/')
+        confirm_password = request.form['confirm_password']
+        if password == confirm_password and is_username_valid(username) and not is_account_or_username_repeated(account, username):
+            add_password(account, username, password)
+            return redirect('/')
+        else:
+            error_message = "Please check your entries. Either passwords do not match or an account/username already exists."
+            return render_template('add.html', error=error_message)
     return render_template('add.html')
+
 
 @app.route('/view')
 def view():
@@ -85,6 +106,26 @@ def view():
 def view1():
     passwords = get_rand_passwords()
     return render_template('view.html', passwords=passwords)
+
+@app.route('/check_duplicate', methods=['POST'])
+def check_duplicate():
+    data = request.get_json()
+    account = data.get("account")
+    username = data.get("username")
+    if is_account_or_username_repeated(account, username):
+        return jsonify({"exists": True})
+    else:
+        return jsonify({"exists": False})
+    
+@app.route('/check_username', methods=['POST'])
+def check_username():
+    data = request.get_json()
+    username = data.get("username")
+
+    if is_username_valid(username) and not is_account_or_username_repeated(None, username):
+        return jsonify({"exists": False})
+    else:
+        return jsonify({"exists": True})
 
 if __name__ == '__main__':
     create_table()
